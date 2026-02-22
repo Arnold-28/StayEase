@@ -76,7 +76,7 @@ cd StayEase
 docker-compose up
 
 # Services running on:
-# Frontend: http://localhost:5173
+# Frontend: [http://localhost:5173](http://127.0.0.1:5177/)
 # Backend:  http://localhost:3001
 # Database: localhost:5432
 # Redis:    localhost:6379
