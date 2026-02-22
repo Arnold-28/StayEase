@@ -1,0 +1,365 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// Users - Owner/Guest roles
+model User {
+  id            String     @id @default(cuid())
+  email         String     @unique
+  username      String     @unique
+  passwordHash  String
+  firstName     String
+  lastName      String
+  phone         String?
+  profileImage  String?
+  role          UserRole   @default(GUEST)
+  
+  // Guest bookings
+  bookings      Booking[]
+  reviews       Review[]
+  
+  // Owner properties and analytics
+  properties    Property[]
+  ownerBookings Booking[]   @relation("OwnerBookings")
+  payouts       Payout[]
+  
+  // Account settings
+  emailVerified Boolean    @default(false)
+  verificationToken String?
+  verificationTokenExpiry DateTime?
+  
+  isActive      Boolean    @default(true)
+  createdAt     DateTime   @default(now())
+  updatedAt     DateTime   @updatedAt
+  
+  @@index([email])
+  @@index([role])
+}
+
+enum UserRole {
+  GUEST
+  OWNER
+}
+
+// Properties - Homestays
+model Property {
+  id            String     @id @default(cuid())
+  ownerId       String
+  owner         User       @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  
+  title         String
+  description   String
+  category      String
+  location      String
+  city          String
+  state         String
+  country       String
+  zipCode       String
+  latitude      Float?
+  longitude     Float?
+  
+  // Property details
+  bedrooms      Int
+  bathrooms     Int
+  guests        Int
+  amenities     String[]
+  images        PropertyImage[]
+  
+  // Pricing
+  basePrice     Float
+  currency      String    @default("USD")
+  weeklyDiscount Float?   @default(0)
+  monthlyDiscount Float?  @default(0)
+  
+  // Availability rules
+  minNightStay  Int       @default(1)
+  maxNightStay  Int?
+  bookingBuffer Int       @default(0)
+  
+  // Booking and availability
+  bookings      Booking[]
+  unavailableDates UnavailableDate[]
+  
+  // Ratings and reviews
+  totalRating   Float     @default(0)
+  reviewCount   Int       @default(0)
+  reviews       Review[]
+  
+  // Status
+  isActive      Boolean   @default(true)
+  featured      Boolean   @default(false)
+  
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  
+  @@index([ownerId])
+  @@index([city])
+  @@index([isActive])
+}
+
+// Property Images
+model PropertyImage {
+  id            String    @id @default(cuid())
+  propertyId    String
+  property      Property  @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+  
+  url           String
+  s3Key         String
+  altText       String?
+  displayOrder  Int       @default(0)
+  
+  createdAt     DateTime  @default(now())
+  
+  @@index([propertyId])
+}
+
+// Bookings
+model Booking {
+  id            String    @id @default(cuid())
+  
+  propertyId    String
+  property      Property  @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+  
+  guestId       String
+  guest         User      @relation(fields: [guestId], references: [id], onDelete: Cascade)
+  
+  ownerId       String
+  owner         User      @relation("OwnerBookings", fields: [ownerId], references: [id], onDelete: Cascade)
+  
+  // Booking Details
+  checkInDate   DateTime
+  checkOutDate  DateTime
+  nights        Int
+  guests        Int
+  
+  pricePerNight Float
+  subtotal      Float
+  tax           Float
+  serviceFee    Float
+  total         Float
+  currency      String    @default("USD")
+  
+  // Status
+  status        BookingStatus @default(PENDING_PAYMENT)
+  cancellationReason String?
+  
+  // Reservation code and QR
+  reservationCode String    @unique
+  qrCode        QRCode?
+  
+  // Payment
+  payment       Payment?
+  refund        Refund?
+  
+  // Communication
+  guestMessage  String?
+  ownerResponse String?
+  
+  // Dates
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  cancelledAt   DateTime?
+  
+  @@index([propertyId])
+  @@index([guestId])
+  @@index([ownerId])
+  @@index([status])
+  @@index([checkInDate])
+  @@index([checkOutDate])
+  @@unique([propertyId, checkInDate, checkOutDate])
+}
+
+enum BookingStatus {
+  PENDING_PAYMENT
+  CONFIRMED
+  CHECKED_IN
+  COMPLETED
+  CANCELLED
+  NO_SHOW
+}
+
+// QR Code for Bookings
+model QRCode {
+  id            String    @id @default(cuid())
+  bookingId     String    @unique
+  booking       Booking   @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  
+  qrString      String    @unique
+  paymentIntentId String? // Stripe/Razorpay payment ID
+  expiryDate    DateTime
+  isVerified    Boolean   @default(false)
+  verifiedAt    DateTime?
+  
+  signature     String    @unique // HMAC signature for verification
+  metadata      String?   // JSON stringified metadata
+  
+  createdAt     DateTime  @default(now())
+  
+  @@index([bookingId])
+  @@index([isVerified])
+}
+
+// Payments
+model Payment {
+  id            String    @id @default(cuid())
+  bookingId     String    @unique
+  booking       Booking   @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  
+  amount        Float
+  currency      String    @default("USD")
+  
+  method        PaymentMethod
+  provider      PaymentProvider
+  transactionId String    @unique
+  status        PaymentStatus @default(PENDING)
+  
+  // Payment details (no card storage - only reference)
+  paymentIntentId String?
+  customerId    String?
+  
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  
+  @@index([transactionId])
+  @@index([status])
+}
+
+enum PaymentMethod {
+  CARD
+  WALLET
+  BANK_TRANSFER
+}
+
+enum PaymentProvider {
+  STRIPE
+  RAZORPAY
+}
+
+enum PaymentStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+  REFUNDED
+}
+
+// Refunds
+model Refund {
+  id            String    @id @default(cuid())
+  bookingId     String    @unique
+  booking       Booking   @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  
+  amount        Float
+  reason        String
+  status        RefundStatus @default(PENDING)
+  
+  processedBy   String?
+  processedAt   DateTime?
+  
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  
+  @@index([status])
+}
+
+enum RefundStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  PROCESSED
+}
+
+// Payouts to owners
+model Payout {
+  id            String    @id @default(cuid())
+  ownerId       String
+  owner         User      @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  
+  amount        Float
+  currency      String    @default("USD")
+  status        PayoutStatus @default(PENDING)
+  
+  bankAccount   String?
+  bankName      String?
+  
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  processedAt   DateTime?
+  
+  @@index([ownerId])
+  @@index([status])
+}
+
+enum PayoutStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+}
+
+// Unavailable Dates
+model UnavailableDate {
+  id            String    @id @default(cuid())
+  propertyId    String
+  property      Property  @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+  
+  date          DateTime
+  reason        String?
+  
+  createdAt     DateTime  @default(now())
+  
+  @@unique([propertyId, date])
+  @@index([propertyId])
+}
+
+// Reviews and Ratings
+model Review {
+  id            String    @id @default(cuid())
+  
+  propertyId    String
+  property      Property  @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+  
+  guestId       String
+  guest         User      @relation(fields: [guestId], references: [id], onDelete: Cascade)
+  
+  rating        Int       // 1-5
+  comment       String?
+  
+  cleanliness   Int?      // 1-5
+  accuracy      Int?      // 1-5
+  communication Int?    // 1-5
+  location      Int?      // 1-5
+  value         Int?      // 1-5
+  
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  
+  @@unique([propertyId, guestId])
+  @@index([propertyId])
+  @@index([guestId])
+}
+
+// Activity logs for audit trail
+model AuditLog {
+  id            String    @id @default(cuid())
+  userId        String
+  action        String
+  resource      String
+  resourceId    String
+  details       String?
+  ipAddress     String?
+  userAgent     String?
+  
+  createdAt     DateTime  @default(now())
+  
+  @@index([userId])
+  @@index([createdAt])
+}
